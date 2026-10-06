@@ -1,0 +1,18 @@
+{
+  "name": "session-connect-demo",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "start": "node --env-file=.env server.mjs",
+    "dev": "npm ci && npm start"
+  },
+  "dependencies": {
+    "@composio/core": "0.22.0",
+    "@composio/openai-agents": "0.11.1",
+    "@openai/agents": "0.18.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

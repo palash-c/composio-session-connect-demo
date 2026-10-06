@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Connected</title>
+<body style="font: 14px system-ui; text-align: center; padding: 60px">
+  Connected. You can close this tab.
+  <script>
+    // Tell the chat tab the login finished (Composio adds ?status=... to the callback URL).
+    const params = Object.fromEntries(new URLSearchParams(location.search));
+    new BroadcastChannel("composio-connect").postMessage(params);
+    setTimeout(() => window.close(), 300);
+  </script>
+</body>

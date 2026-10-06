@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Assistant</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #fafafa; color: #171717; font: 14px/1.5 system-ui; }
+      main { width: 520px; max-width: calc(100% - 32px); margin: 48px auto; }
+      h1 { font-size: 19px; margin: 0 0 20px; }
+      #messages p { padding: 12px; margin: 0 0 10px; background: white; border: 1px solid #eee; border-radius: 8px; white-space: pre-wrap; }
+      #messages p.user { background: #f3f3f3; }
+      form { display: flex; gap: 8px; }
+      input { flex: 1; min-width: 0; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font: inherit; }
+      button { background: #171717; color: white; border: 0; border-radius: 8px; padding: 10px 16px; font: 500 14px system-ui; cursor: pointer; }
+      button:disabled { opacity: 0.4; }
+      #backdrop { position: fixed; inset: 0; background: #0006; }
+      dialog { border: 0; border-radius: 10px; padding: 24px; width: 420px; max-width: calc(100% - 32px); }
+      dialog::backdrop { background: #0006; }
+      dialog h2 { font-size: 17px; margin: 0 0 16px; }
+      .option { display: block; width: 100%; text-align: left; background: white; color: #171717; border: 1px solid #ddd; margin: 0 0 10px; padding: 12px 14px; }
+      .option small { display: block; color: #737373; font-weight: 400; }
+      .option.selected { border-color: #171717; box-shadow: 0 0 0 1px #171717; }
+      .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+      .secondary { background: white; color: #171717; border: 1px solid #ddd; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Assistant</h1>
+      <div id="messages"><p>Ask me anything. I can use any app through Composio.</p></div>
+      <form id="chat">
+        <input id="message" placeholder="e.g. summarize my unread Gmail, or list my GitHub repos" maxlength="1000" />
+        <button id="send">Send</button>
+      </form>
+    </main>
+
+    <dialog id="access">
+      <h2 id="access-title">Choose what the assistant can do</h2>
+      <button class="option selected" data-access="read">Read only<small>View and search only.</small></button>
+      <button class="option" data-access="safe">Non-destructive<small>Everything except actions tagged destructive.</small></button>
+      <button class="option" data-access="full">Full access<small>All available actions.</small></button>
+      <div class="actions">
+        <button class="secondary" id="cancel">Cancel</button>
+        <button id="continue">Continue</button>
+      </div>
+    </dialog>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const appName = (slug) => slug.replace(/(^|_)(\w)/g, (_, sep, c) => (sep ? " " : "") + c.toUpperCase());
+      let busy = false, access = "read", toolkit = null, waitingFor = null;
+
+      function addMessage(text, cls) {
+        const p = document.createElement("p");
+        if (cls) p.className = cls;
+        p.textContent = text;
+        $("messages").appendChild(p);
+        p.scrollIntoView({ behavior: "smooth" });
+        return p;
+      }
+
+      async function post(path, body) {
+        const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (!res.ok) throw Error(data.error);
+        return data;
+      }
+
+      // Chat: the agent replies, plus a Connect button for any app that needs auth.
+      async function send(text, { show = true } = {}) {
+        if (busy || !text.trim()) return;
+        busy = true;
+        $("send").disabled = true;
+        if (show) addMessage(text, "user");
+        $("message").value = "";
+        const thinking = addMessage("…");
+        try {
+          const data = await post("/api/chat", { message: text });
+          thinking.textContent = data.message;
+          for (const slug of data.connect) {
+            const button = document.createElement("button");
+            button.textContent = `Connect ${appName(slug)} →`;
+            button.onclick = () => openAccess(slug);
+            addMessage("").appendChild(button);
+          }
+        } catch (e) {
+          thinking.textContent = e.message;
+        } finally {
+          busy = false;
+          $("send").disabled = false;
+        }
+      }
+      $("chat").onsubmit = (e) => { e.preventDefault(); send($("message").value); };
+
+      // Access choice: saved to the Composio session before the user logs in.
+      function openAccess(slug) {
+        toolkit = slug;
+        $("access-title").textContent = `Choose what the assistant can do in ${appName(slug)}`;
+        $("continue").textContent = `Continue to ${appName(slug)}`;
+        $("access").showModal();
+      }
+      document.querySelectorAll(".option").forEach((b) => (b.onclick = () => {
+        access = b.dataset.access;
+        document.querySelectorAll(".option").forEach((x) => x.classList.toggle("selected", x === b));
+      }));
+      $("cancel").onclick = () => $("access").close();
+      $("continue").onclick = async () => {
+        const tab = window.open("", "_blank"); // open now so the popup isn't blocked
+        try {
+          const { url } = await post("/api/access", { toolkit, access });
+          tab.location = url;
+          $("access").close();
+          waitingFor = toolkit;
+          addMessage(`Access set to "${access}" for ${appName(toolkit)}. Finish login in the new tab.`);
+        } catch (e) {
+          tab.close();
+          addMessage(e.message);
+        }
+      };
+
+      // After login, Composio redirects that tab to /connected, which messages this tab.
+      new BroadcastChannel("composio-connect").onmessage = async ({ data }) => {
+        if (!waitingFor) return;
+        const slug = waitingFor;
+        waitingFor = null;
+        if (data.status && data.status !== "success") return addMessage(`${appName(slug)} login didn't complete (${data.status}).`);
+        addMessage(`✓ ${appName(slug)} connected.`);
+        while (busy) await new Promise((r) => setTimeout(r, 300));
+        send(`${appName(slug)} is now connected. Continue with my earlier request (if there was none, just confirm).`, { show: false });
+      };
+    </script>
+  </body>
+</html>
