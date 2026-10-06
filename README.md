@@ -27,49 +27,27 @@ Open http://localhost:3941 and try:
 
 ## How it works
 
+![Flow](flow.png)
+
+<details><summary>Mermaid source</summary>
+
+
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor U as User (chat tab)
-    participant S as Demo server<br/>(server.mjs)
-    participant O as OpenAI<br/>(Agents SDK)
-    participant C as Composio API
-    participant A as App login<br/>(e.g. GitHub OAuth)
-
-    Note over U,C: Start a chat
-    U->>S: POST /api/chat "list my GitHub repos"
-    S->>C: composio.sessions.create(userId, { manageConnections: { callbackUrl } })
-    C-->>S: session (all toolkits, meta tools)
-    S->>C: session.tools({ afterExecute })
-    C-->>S: COMPOSIO_SEARCH_TOOLS, COMPOSIO_MULTI_EXECUTE_TOOL,<br/>COMPOSIO_MANAGE_CONNECTIONS, COMPOSIO_GET_TOOL_SCHEMAS
-
-    Note over S,C: Agent loop: the SDK runs the tools itself
-    S->>O: run(agent, history + message)
-    O->>C: COMPOSIO_SEARCH_TOOLS "list repos" (github)
-    O->>C: COMPOSIO_MANAGE_CONNECTIONS (github is not connected)
-    C-->>S: redirect_url (Composio Connect link)
-    Note right of S: afterExecute keeps the link on the server<br/>and tells the model "connect_button_shown"
-    O-->>S: "Click the connect button below"
-    S-->>U: message + Connect GitHub button
-
-    Note over U,C: Choose access before logging in
-    U->>S: POST /api/access { toolkit: "github", access: "read" }
-    S->>C: session.update({ tools: { github: { tags: { enable: [readOnlyHint], disable: [destructiveHint] } } } })
-    Note right of C: only this toolkit's rule changes,<br/>other toolkits' rules are kept
-    S-->>U: the same Connect link
-    U->>A: login + consent (new tab)
-    A->>C: OAuth callback, connected account becomes ACTIVE
-    C-->>U: redirect login tab to callbackUrl (/connected?status=success)
-    U->>U: /connected tells the chat tab (BroadcastChannel), then closes
-
-    Note over U,C: Resume automatically
-    U->>S: POST /api/chat "GitHub is now connected. Continue..."
-    S->>O: run(agent, history + message)
-    O->>C: COMPOSIO_MULTI_EXECUTE_TOOL GITHUB_LIST_REPOS... (only read-only tools allowed)
-    C-->>O: repos
-    O-->>S: summary
-    S-->>U: answer
+flowchart TD
+    A["<b>1. User sends a message</b><br/>POST /api/chat"] --> B["<b>2. Create Composio session</b> (once per chat)<br/><code>composio.sessions.create(userId, {<br/>manageConnections: { enable: true, callbackUrl } })</code><br/>no toolkit list = all toolkits"]
+    B --> C["<b>3. Agent runs with session meta tools</b><br/><code>session.tools({ afterExecute })</code> + OpenAI Agents SDK<br/>finds tools via <code>COMPOSIO_SEARCH_TOOLS</code>"]
+    C --> D{"App connected<br/>for this userId?"}
+    D -- yes --> J
+    D -- no --> E["<b>4. Agent calls COMPOSIO_MANAGE_CONNECTIONS</b><br/>returns <code>redirect_url</code> (Connect link)<br/><code>afterExecute</code> keeps the link on the server;<br/>model only sees <i>connect_button_shown</i>"]
+    E --> F["<b>5. Chat shows Connect button → access dialog</b><br/>Read only · Non-destructive · Full<br/>POST /api/access"]
+    F --> G["<b>6. Save access on the session (before login)</b><br/><code>session.update({ tools: { ...existing, [toolkit]: rule } })</code><br/>read: <code>tags.enable [readOnlyHint], disable [destructiveHint]</code><br/>non-destructive: <code>tags.disable [destructiveHint]</code> · full: <code>disable []</code>"]
+    G --> H["<b>7. User logs in</b> (same Connect link, new tab)<br/>connected account becomes ACTIVE<br/>Composio redirects to <code>callbackUrl</code> /connected?status=success"]
+    H --> I["<b>8. /connected notifies the chat tab</b> (BroadcastChannel)<br/>chat auto-sends <i>GitHub is now connected. Continue</i>"]
+    I --> C
+    J["<b>9. Agent executes</b><br/><code>COMPOSIO_MULTI_EXECUTE_TOOL</code><br/>session only allows tools the access rule permits"] --> K["<b>10. Answer in chat</b>"]
 ```
+
+</details>
 
 ### The Composio pieces
 
