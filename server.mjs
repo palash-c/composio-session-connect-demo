@@ -82,7 +82,10 @@ async function handleChat(chat, message) {
     modelSettings: MODEL.startsWith("gpt-5") ? { reasoning: { effort: "low" } } : {},
   });
   const result = await run(agent, [...chat.history, { role: "user", content: message }], { maxTurns: 12 });
-  chat.history = result.history.slice(-40);
+  // Keep the last ~10 user turns. Cut only at a user message so a tool call
+  // is never separated from its output (OpenAI rejects orphaned outputs).
+  const userTurns = result.history.flatMap((item, i) => (item.role === "user" ? [i] : []));
+  chat.history = result.history.slice(userTurns.at(-10) ?? 0);
   return { message: result.finalOutput || "", connect: buttons };
 }
 
